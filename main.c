@@ -15,42 +15,54 @@
 #define MYDARK  (Color) {26, 18, 43, 255}
 #define MYLIGHT (Color) {232,223,173,255}
 #define MYMID1  (Color) {109,131,109,255}
-#define gridSizeX 500
-#define gridSizeY 500
+#define gridSizeX 200
+#define gridSizeY 200
 
 static Mesh GenMyMesh(void);
 float* noiseData;
+Model model;
 float noiseMin,noiseMax;
 bool interactive=true;
+bool twoD=false;
 int sliderBarValue = 1;
-int octaves = 1;
-float persistance = 0.5f;
-float lacunarity = 2.0f;
+int octaves        = 4;
+float persistance  = 0.5f;
+float lacunarity   = 2.0f;
+float scale        = 1.0f;
+int deepBlue       = 10;
+int lightBlue      = 50;
+int sandYellow     = 60;
+int lightGreen     = 100;
+int darkGreen      = 150;
+int lightRock      = 200;
+int darkRock       = 250;
+int whiteSnow      = 255;
+Texture groundTexture;
 
-float* genNoise(int sizeX,int sizeY, int octaves, float persistance, float lacunarity) {
+float* genNoise(int sizeX,int sizeY, float scale, int octaves, float persistance, float lacunarity) {
     float* noiseData = malloc(sizeX * sizeY *sizeof(float));
+    if (scale==0) scale=0.001;
     noiseMin=FLT_MAX;
     noiseMax=FLT_MIN;
     fnl_state noise = fnlCreateState(601700);
     noise.noise_type = FNL_NOISE_PERLIN;
+    noise.octaves = 1;
+    noise.lacunarity = 1;
     int index = 0;
     //Define offset for each octave
     int offSetX[octaves];
     int offSetY[octaves];
     for (int i=0;i<octaves; i++) {
-        offSetX[i]=GetRandomValue(-1000, 1000);
-        offSetY[i]=GetRandomValue(-1000, 1000);
+        offSetX[i]=GetRandomValue(-100, 100);
+        offSetY[i]=GetRandomValue(-100000, 100000);
     }
-
-
-
 
     for (int y=0;y<sizeY;y++) {
         for (int x=0; x<sizeX;x++) {
             float amplitude = 1.0f;
             float frequency = 1.0f;
             for (int o=0;o<octaves;o++) {
-                noiseData[index] = fnlGetNoise2D(&noise, x*frequency+offSetX[o], y*frequency+offSetY[o]);
+                noiseData[index] = fnlGetNoise2D(&noise, (x/scale)*frequency+offSetX[o], (y/scale)*frequency+offSetY[o]);
                 noiseData[index] = noiseData[index] + noiseData[index]*amplitude;
 
                 amplitude *= persistance;
@@ -62,35 +74,70 @@ float* genNoise(int sizeX,int sizeY, int octaves, float persistance, float lacun
         index++;
         }
     }
+
+    //Normalise NoiseData os that it sites between 0 and 1:
+    index=0;
+    for (int y=0;y<sizeY;y++) {
+        for (int x=0;x<sizeX;x++) {
+            noiseData[index]=Remap(noiseData[x+y*gridSizeX],noiseMin,noiseMax,0,1);
+            index++;
+        }
+    }
     TraceLog(LOG_INFO,TextFormat("Noise Min/Max: %f/%f",noiseMin,noiseMax));
     return noiseData;
 }
 
-Image genImageFromNoise(float* noiseData) {
+Texture genTextureFromNoise(float* noiseData) {
     Image gTexture;
-    gTexture = GenImageColor(gridSizeY,gridSizeY,RAYWHITE);
     Color color;
+    int noiseRemaped=0;
+    gTexture = GenImageColor(gridSizeY,gridSizeY,RAYWHITE);
     for (int y=0;y<gridSizeY;y++) {
         for (int x=0; x<gridSizeX;x++) {
-            color = (Color){Remap(noiseData[x+y*gridSizeX],noiseMin,noiseMax,0,255),125,125,255};
+            noiseRemaped = Remap(noiseData[x+y*gridSizeX],0,1,0,255);
+            if (noiseRemaped  <  deepBlue)                                 color=(Color){51 ,99 ,192,255}; //deepBlue
+            if ((noiseRemaped >= deepBlue) && (noiseRemaped<lightBlue))    color=(Color){51 ,99 ,255,255}; //lightBlue
+            if ((noiseRemaped >= lightBlue) && (noiseRemaped<sandYellow))  color=(Color){210,208,123,255}; //sandYellow
+            if ((noiseRemaped >= sandYellow) && (noiseRemaped<lightGreen)) color=(Color){87 ,152,27 ,255}; //lightGreen
+            if ((noiseRemaped >= lightGreen) && (noiseRemaped<darkGreen))  color=(Color){62 ,107,17 ,255}; //darkGreen
+            if ((noiseRemaped >= darkGreen) && (noiseRemaped<lightRock))   color=(Color){91 ,69 ,61 ,255}; //lightRock
+            if ((noiseRemaped >= lightRock) && (noiseRemaped<darkRock))    color=(Color){75 ,60 ,54 ,255}; //darkRock
+            if (noiseRemaped >= darkRock)                                  color=(Color){255,255,255,255}; //whiteSnow
+            //color = (Color){noiseRemaped,125,125,255};
             ImageDrawPixel(&gTexture,x,y,color);
         }
     }
-    return gTexture;
+    return LoadTextureFromImage(gTexture);
+}
+
+void refreshMap() {
+    UnloadModel(model);
+    noiseData=genNoise(gridSizeX,gridSizeX,scale,octaves,persistance,lacunarity);
+    groundTexture = genTextureFromNoise(noiseData);
+    model = LoadModelFromMesh(GenMyMesh());
+    model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = groundTexture;
+}
+void repaintMap() {
+    UnloadModel(model);
+    groundTexture = genTextureFromNoise(noiseData);
+    model = LoadModelFromMesh(GenMyMesh());
+    model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = groundTexture;
 }
 
 int main (void) {
-    Model model;
     Vector3 position = { 0.0f, 0.0f, 0.0f };
-    noiseData=genNoise(gridSizeX,gridSizeX, octaves, persistance, lacunarity);
-    Image groundTexture = genImageFromNoise(noiseData);
+    noiseData=genNoise(gridSizeX,gridSizeX, scale, octaves, persistance, lacunarity);
     InitWindow(WIDTH, HEIGHT, "3D Adventures 1");
-    SetTargetFPS(120);
-    ExportImage(groundTexture,"test1.png");
+    SetTargetFPS(119);
+    groundTexture = genTextureFromNoise(noiseData);
+    ExportImage(LoadImageFromTexture(groundTexture),"test1.png");
     model = LoadModelFromMesh(GenMyMesh());
-    model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = LoadTextureFromImage(groundTexture);
+    GuiSetStyle(DEFAULT,TEXT_SIZE,20);
+    GuiSetStyle(DEFAULT,TEXT_COLOR_NORMAL,ColorToInt(RAYWHITE));
+    GuiSetStyle(BUTTON ,TEXT_COLOR_NORMAL,ColorToInt(BLACK));
+    model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = groundTexture;
     Camera3D camera = {0};
-    camera.position = (Vector3){0.0f, 400.0f, 400.0f};
+    camera.position = (Vector3){0.0f, 30.0f, 200.0f};
     camera.target   = (Vector3){0.0f, 0.0f,  0.0f};
     camera.up       = (Vector3){0.0f, 1.0f,  0.0f};
     camera.fovy     = 45.0f;
@@ -116,29 +163,79 @@ int main (void) {
         BeginDrawing();
             ClearBackground(MYDARK);
             BeginMode3D(camera);
-                //DrawCube(Position, 2.0f, 2.0f, 2.0f, MYMID1);
-                //DrawCubeWires(Position, 2.0f, 2.0f, 2.0f, MYLIGHT);
-                DrawGrid(gridSizeX, 1.0f);
+                DrawGrid(gridSizeX, 10.0f);
                 DrawRay(xAxis,RED);
                 DrawRay(yAxis,BLUE);
                 DrawRay(zAxis,YELLOW);
                 DrawModel(model,position,1.0f,MYLIGHT);
             EndMode3D();
-            octaves     = GuiSliderBar((Rectangle){ 30, 20, 200, 40 }, "Oct", TextFormat("%i", (int)octaves), octaves, 1, 8);
-            persistance = GuiSliderBar((Rectangle){ 30, 80, 200, 40 }, "Per", TextFormat("%f", (float)persistance), persistance, 0, 4);
-            lacunarity  = GuiSliderBar((Rectangle){ 30, 140,200, 40 }, "Lac", TextFormat("%f", (float)lacunarity), lacunarity, 0, 4);
+            DrawRectangle(0,0,400,HEIGHT,MYMID1);
+            int noctaves = GuiSliderBar((Rectangle){ 50, 20, 200, 40 }, "Oct", TextFormat("%i", (int)octaves), octaves, 1, 8);
+            if (noctaves!=octaves) {
+                octaves=noctaves;
+                refreshMap();
+            }
+            float npersistance = GuiSliderBar((Rectangle){ 50, 80, 200, 40 }, "Per", TextFormat("%f", (float)persistance), persistance, 0, 4);
+            if (npersistance != persistance) {
+                persistance = npersistance;
+                refreshMap();
+            }
+            float nlacunarity  = GuiSliderBar((Rectangle){ 50, 140,200, 40 }, "Lac", TextFormat("%f", (float)lacunarity), lacunarity, 0, 4);
+            if (nlacunarity!=lacunarity) {
+                lacunarity=nlacunarity;
+                refreshMap();
+            }
+            if (GuiSliderBar((Rectangle){ 50, 200,200, 40 }, "Sca", TextFormat("%f", (float)scale), scale, 0, 50) != scale) {
+                scale = GuiSliderBar((Rectangle){ 50, 200,200, 40 }, "Sca", TextFormat("%f", (float)scale), scale, 0, 50);
+                refreshMap();
+            }
+            int ndeepBlue = GuiSliderBar((Rectangle){ 50, 380 ,200, 40 }, "dBl", TextFormat("%i", (int)deepBlue), deepBlue, 0, 255);
+            if (ndeepBlue != deepBlue) {
+                deepBlue = ndeepBlue;
+                repaintMap();
+            }
+            int nlightBlue = GuiSliderBar((Rectangle){ 50, 440 ,200, 40 }, "lBl", TextFormat("%i", (int)lightBlue), lightBlue, 0, 255);
+            if (nlightBlue != lightBlue) {
+                lightBlue = nlightBlue;
+                repaintMap();
+            }
+            int nsandYellow = GuiSliderBar((Rectangle){ 50, 500 ,200, 40 }, "sYe", TextFormat("%i", (int)sandYellow), sandYellow, 0, 255);
+            if (nsandYellow != sandYellow) {
+                sandYellow = nsandYellow;
+                repaintMap();
+            }
+            int nlightGreen = GuiSliderBar((Rectangle){ 50, 560 ,200, 40 }, "lGr", TextFormat("%i", (int)lightGreen), lightGreen, 0, 255);
+            if (nlightGreen != lightGreen) {
+                lightGreen = nlightGreen;
+                repaintMap();
+            }
+            int ndarkGreen = GuiSliderBar((Rectangle){ 50, 620 ,200, 40 }, "dGr", TextFormat("%i", (int)darkGreen), darkGreen, 0, 255);
+            if (ndarkGreen != darkGreen) {
+                darkGreen = ndarkGreen;
+                repaintMap();
+            }
+            int nlightRock = GuiSliderBar((Rectangle){ 50, 680 ,200, 40 }, "lRk", TextFormat("%i", (int)lightRock), lightRock, 0, 255);
+            if (nlightRock != lightRock) {
+                lightRock = nlightRock;
+                repaintMap();
+            }
+            int ndarkRock = GuiSliderBar((Rectangle){ 50, 740 ,200, 40 }, "dRk", TextFormat("%i", (int)darkRock), darkRock, 0, 255);
+            if (ndarkRock != darkRock) {
+                darkRock = ndarkRock;
+                repaintMap();
+            }
             GuiSetState(GUI_STATE_NORMAL);
-            if (GuiButton((Rectangle){ 20, 200, 200, 40 }, "Refresh")) {
-                UnloadModel(model);
-                noiseData=genNoise(gridSizeX,gridSizeX,octaves,persistance,lacunarity);
-                groundTexture = genImageFromNoise(noiseData);
-                model = LoadModelFromMesh(GenMyMesh());
-                model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = LoadTextureFromImage(groundTexture);
+            if (GuiButton((Rectangle){ 50, 260, 200, 40 }, "Refresh")) refreshMap();
+            if (GuiButton((Rectangle){ 50, 320, 200, 40 }, "2d/3d")|| IsKeyPressed('2')) {
+                twoD=!twoD;
+            }
+            if (twoD) {
+                DrawTextureEx(groundTexture,(Vector2){WIDTH-gridSizeX*5,HEIGHT-gridSizeY*5},0,5.0f,RAYWHITE);
             }
         EndDrawing();
     }
     UnloadModel(model);
-    UnloadImage(groundTexture);
+    UnloadTexture(groundTexture);
     CloseWindow();
     free(noiseData);
     return 0;
